@@ -4,12 +4,10 @@
 package com.couchbase.loader;
 
 import com.couchbase.client.core.time.Delay;
-import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.document.JsonDocument;
 import com.couchbase.client.java.document.json.JsonObject;
 import com.couchbase.client.java.util.retry.RetryBuilder;
 import com.teradata.tpcds.Results;
-import com.teradata.tpcds.Session;
 import com.teradata.tpcds.Table;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -27,12 +25,7 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
     private static final Logger LOGGER = LogManager.getRootLogger();
 
     // Partitioning members
-    private final int numberOfPartitions;
-    private final int partition;
     private int count;
-
-    // Bucket to write to
-    private final Bucket bucket;
 
     // Table members
     private final List<Table> selectedTables;
@@ -42,21 +35,23 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
     private int currentTableIndex;
     private final boolean generateAllTables;
 
+    // Configuration
+    private TpcdsConfiguration tpcdsConfiguration;
+    private BucketUpsertConfiguration bucketUpsertConfiguration;
+
     // List to batch the insertion
-    private final int batchLimit;
     private ArrayList<JsonDocument> generatedJsonDocuments = new ArrayList<>();
 
-    TpcdsGeneratorAndLoaderRunnable(int partition, Session session, String tableToGenerate, Bucket bucket, int batchLimit) {
-        this.numberOfPartitions = session.getParallelism();
-        this.partition = partition;
-        this.bucket = bucket;
-        this.batchLimit = batchLimit;
+    TpcdsGeneratorAndLoaderRunnable(TpcdsConfiguration tpcdsConfiguration,
+            BucketUpsertConfiguration bucketUpsertConfiguration) {
+        this.tpcdsConfiguration = tpcdsConfiguration;
+        this.bucketUpsertConfiguration = bucketUpsertConfiguration;
 
         // If the tableName is null, then we're generating all the tables
-        generateAllTables = tableToGenerate == null;
+        generateAllTables = tpcdsConfiguration.getTableToGenerate() == null;
 
         // Get the table(s)
-        selectedTables = getTableFromStringTableName(tableToGenerate);
+        selectedTables = getTableFromStringTableName(tpcdsConfiguration.getTableToGenerate());
 
         // These variables will monitor and assist with each table's data generation
         currentTableIndex = 0;
@@ -65,13 +60,12 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
 
         // Iterators for the tables to generate the data for
         for (Table table : selectedTables) {
-            Results result = Results.constructResults(table, session);
+            Results result = Results.constructResults(table, tpcdsConfiguration.getSession());
             tableIterators.add(result.iterator());
         }
     }
 
-    @Override
-    public void run() {
+    @Override public void run() {
         boolean continueGeneration;
 
         // Loop until the conditions stop the loop
@@ -101,18 +95,19 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
         // Upsert any leftovers
         if (!generatedJsonDocuments.isEmpty()) {
             List<JsonDocument> copy = new ArrayList<>(generatedJsonDocuments);
-            Observable.from(copy)
-                    .flatMap((final JsonDocument docToInsert) -> bucket.async().upsert(docToInsert)
-                            .retryWhen(RetryBuilder.anyOf(Exception.class)
-                                    .delay(Delay.fixed(5000, TimeUnit.MILLISECONDS)).max(10).build()))
+            Observable.from(copy).flatMap(
+                    (final JsonDocument docToInsert) -> bucketUpsertConfiguration.getBucket().async()
+                            .upsert(docToInsert).retryWhen(RetryBuilder.anyOf(Exception.class).delay(Delay
+                                    .fixed(bucketUpsertConfiguration.getFailureRetryDelay(), TimeUnit.MILLISECONDS))
+                                    .max(bucketUpsertConfiguration.getFailureMaximumRetries()).build()))
                     .onErrorReturn(throwable -> {
                         System.out.println(throwable.getMessage());
                         return null;
                     }).toBlocking().last();
         }
 
-        LOGGER.log(Level.INFO, "Partition " + partition + " generated " + count + " records");
-        System.out.println("Partition " + partition + " generated " + count + " records");
+        LOGGER.log(Level.INFO, "Partition " + tpcdsConfiguration.getPartition() + " generated " + count + " records");
+        System.out.println("Partition " + tpcdsConfiguration.getPartition() + " generated " + count + " records");
     }
 
     /**
@@ -132,8 +127,9 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
         }
 
         // Search for the table
-        List<Table> searchedTable = Table.getBaseTables().stream()
-                .filter(table -> tableName.equalsIgnoreCase(table.getName())).collect(Collectors.toList());
+        List<Table> searchedTable =
+                Table.getBaseTables().stream().filter(table -> tableName.equalsIgnoreCase(table.getName()))
+                        .collect(Collectors.toList());
 
         if (searchedTable.isEmpty()) {
             throw new IllegalStateException("Invalid table name");
@@ -161,8 +157,9 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
         }
 
         // JsonDocument with key and created record
-        JsonDocument parentJsonDocument = JsonDocument.create(
-                currentTable.getName() + "-" + ((partition - 1) + (count * numberOfPartitions)), parentRecord);
+        JsonDocument parentJsonDocument = JsonDocument
+                .create(currentTable.getName() + "-" + ((tpcdsConfiguration.getPartition() - 1) + (count
+                        * tpcdsConfiguration.getPartitions())), parentRecord);
 
         // Collecting records for batch upsert
         generatedJsonDocuments.add(parentJsonDocument);
@@ -191,12 +188,13 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
         }
 
         // Batch load
-        if (generatedJsonDocuments.size() >= batchLimit) {
+        if (generatedJsonDocuments.size() >= bucketUpsertConfiguration.getBatchLimit()) {
             List<JsonDocument> copy = new ArrayList<>(generatedJsonDocuments);
-            Observable.from(copy)
-                    .flatMap((final JsonDocument docToInsert) -> bucket.async().upsert(docToInsert)
-                            .retryWhen(RetryBuilder.anyOf(Exception.class)
-                                    .delay(Delay.fixed(5000, TimeUnit.MILLISECONDS)).max(10).build()))
+            Observable.from(copy).flatMap(
+                    (final JsonDocument docToInsert) -> bucketUpsertConfiguration.getBucket().async()
+                            .upsert(docToInsert).retryWhen(RetryBuilder.anyOf(Exception.class).delay(Delay
+                                    .fixed(bucketUpsertConfiguration.getFailureRetryDelay(), TimeUnit.MILLISECONDS))
+                                    .max(bucketUpsertConfiguration.getFailureMaximumRetries()).build()))
                     .onErrorReturn(throwable -> {
                         System.out.println(throwable.getMessage());
                         return null;

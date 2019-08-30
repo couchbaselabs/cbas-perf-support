@@ -25,18 +25,14 @@ import com.couchbase.client.java.env.DefaultCouchbaseEnvironment;
 import com.teradata.tpcds.Session;
 
 /**
- * This class will generate TPC-DS data based on the specified parallelism and scaling factor, and then feed it to the
- * KV buckets.
- *
- * If the chunk number is passed as an argument, then only that chunk is generated and loaded to the KV bucket. If the
- * chunk number is not passed, or a value of -1 is passed, then all the chunks will be generated and loaded to the KV
- * bucket.
- *
- * Note:
- * For convenience, chunk number is equal to partition/thread number and they start at 1, and hence, partition 1
- * generates chunk 1, partition 2 generates chunk 2, ... and so on.
+ * This class will generate TPC-DS data based on the specified partitions and scaling factor, and then load it into the
+ * Couchbase buckets.
+ * <p>
+ * If the partition number is passed as an argument, then only that partition is generated and loaded to the bucket. If
+ * the partition number is not passed, or a value of -1 is passed, then all the partitions will be generated and loaded
+ * to the bucket.
  */
-public class TpcdsToKVFeeder {
+public class TpcdsToCouchbaseLoader {
 
     private static final Logger LOGGER = LogManager.getRootLogger();
 
@@ -54,11 +50,12 @@ public class TpcdsToKVFeeder {
     // Configurable members default values
     private static final int BATCH_LIMIT_DEFAULT = 10000; // Threshold to reach before batch upserting
     private static final double SCALING_FACTOR_DEFAULT = 1;
-    private static final int PARALLELISM_DEFAULT = 2;
-    private static final int CHUNK_NUMBER_DEFAULT = -1;
+    private static final int PARTITIONS_DEFAULT = 2;
+    private static final int PARTITION_DEFAULT = -1;
     private static final int KV_ENDPOINTS_DEFAULT = 5; // improves the pipelining for better performance
     private static final int KV_TIMEOUT_DEFAULT = 10000;
     private static final int FAILURE_RETRY_DELAY_DEFAULT = 5000;
+    private static final int FAILURE_MAXIMUM_RETRIES_DEFAULT = 10;
 
     // Properties field names
     private static final String HOST_NAME_FIELD_NAME = "hostname";
@@ -69,11 +66,12 @@ public class TpcdsToKVFeeder {
     private static final String BUCKET_SIZE_FIELD_NAME = "bucketsize";
     private static final String BATCH_LIMIT_FIELD_NAME = "batchlimit";
     private static final String SCALING_FACTOR_FIELD_NAME = "scalingfactor";
-    private static final String PARALLELISM_FIELD_NAME = "parallelism";
-    private static final String CHUNK_NUMBER_FIELD_NAME = "chunknumber";
+    private static final String PARTITIONS_FIELD_NAME = "partitions";
+    private static final String PARTITION_FIELD_NAME = "partition";
     private static final String KV_ENDPOINTS_FIELD_NAME = "kvendpoints";
     private static final String KV_TIMEOUT_FIELD_NAME = "kvtimeout";
-    private static final String FAILURE_RETRY_DELAY_FIELD_NAME = "failureRetryDelay";
+    private static final String FAILURE_RETRY_DELAY_FIELD_NAME = "failureretrydelay";
+    private static final String FAILURE_MAXIMUM_RETRIES_FIELD_NAME = "failuremaximumretries";
 
     // Any configuration values that are not passed will use their default respective value
     private static String hostname = HOST_NAME_DEFAULT;
@@ -84,11 +82,12 @@ public class TpcdsToKVFeeder {
     private static int bucketSize = BUCKET_SIZE_DEFAULT;
     private static int batchLimit = BATCH_LIMIT_DEFAULT;
     private static double scalingFactor = SCALING_FACTOR_DEFAULT;
-    private static int parallelism = PARALLELISM_DEFAULT;
+    private static int partitions = PARTITIONS_DEFAULT;
+    private static int partition = PARTITION_DEFAULT;
     private static int kvEndpoints = KV_ENDPOINTS_DEFAULT;
     private static int kvTimeout = KV_TIMEOUT_DEFAULT;
     private static int failureRetryDelay = FAILURE_RETRY_DELAY_DEFAULT;
-    private static int chunkNumber = CHUNK_NUMBER_DEFAULT;
+    private static int failureMaximumRetries = FAILURE_MAXIMUM_RETRIES_DEFAULT;
 
     // Table to generate, null value will generate all tables
     private static String TABLE_TO_GENERATE = null;
@@ -100,10 +99,10 @@ public class TpcdsToKVFeeder {
         loadConfiguration(args, configuration);
         readConfiguration(configuration);
 
-        // Threads count is based on the parallelism level
-        // If chunk number is not -1, then this is meant to generate a single chunk, so we have a single thread
-        ExecutorService executorService = Executors.newFixedThreadPool(chunkNumber == -1 ? parallelism : 1);
-        LOGGER.log(Level.INFO, "Parallelism level is " + parallelism);
+        // Threads count is based on the partitions level
+        // If partition number is not -1, then this is meant to generate a single partition, so we have a single thread
+        ExecutorService executorService = Executors.newFixedThreadPool(partition == -1 ? partitions : 1);
+        LOGGER.log(Level.INFO, "partitions level is " + partitions);
 
         // Connect to the server and authenticate
         LOGGER.log(Level.INFO, "Connecting to Couchbase server");
@@ -112,12 +111,12 @@ public class TpcdsToKVFeeder {
                 .build();
         Cluster cluster = CouchbaseCluster.create(environment, hostname);
         cluster.authenticate(username, password);
-//        ClusterManager clusterManager = cluster.clusterManager();
         LOGGER.log(Level.INFO, "Connection to Couchbase server successful");
 
         /*
+        ClusterManager clusterManager = cluster.clusterManager();
         // Delete the bucket if it already exists
-        if (isDeleteBucketIfExists && clusterManager.hasBucket(bucketName) && (chunkNumber == 1 || chunkNumber == -1)) {
+        if (isDeleteBucketIfExists && clusterManager.hasBucket(bucketName) && (partition == 1 || partition == -1)) {
             clusterManager.removeBucket(bucketName);
             LOGGER.log(Level.INFO, bucketName + " bucket deleted");
         }
@@ -143,24 +142,30 @@ public class TpcdsToKVFeeder {
         // Start time
         long startTime = System.currentTimeMillis();
 
-        // chunNumber -1 will result in generating all chunks on a single partition
-        if (chunkNumber == -1) {
-            // We start from 1 since chunk numbers start from 1
-            for (int i = 1; i <= parallelism; i++) {
-                Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(parallelism)
+        // partition -1 will result in generating all partitions on a single partition
+        if (partition == -1) {
+            // We start from 1 since partition numbers start from 1
+            for (int i = 1; i <= partitions; i++) {
+                Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions)
                         .withChunkNumber(i);
 
-                // TPC chunks start at 1 not 0, so parallelism + 1 is the chunk number
-                TpcdsGeneratorAndLoaderRunnable runnable = new TpcdsGeneratorAndLoaderRunnable(i, session, TABLE_TO_GENERATE, bucket, batchLimit);
+                TpcdsConfiguration tpcdsConfiguration = new TpcdsConfiguration(session, i, TABLE_TO_GENERATE);
+                BucketUpsertConfiguration bucketUpsertConfiguration =
+                        new BucketUpsertConfiguration(bucket, batchLimit, failureRetryDelay, failureMaximumRetries);
+                TpcdsGeneratorAndLoaderRunnable runnable =
+                        new TpcdsGeneratorAndLoaderRunnable(tpcdsConfiguration, bucketUpsertConfiguration);
                 executorService.submit(runnable);
             }
         } else {
-            // Generating a single chunk
-            Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(parallelism)
-                    .withChunkNumber(chunkNumber);
+            // Generating a single partition
+            Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions)
+                    .withChunkNumber(partition);
 
-            // TPC chunks start at 1 not 0, so parallelism + 1 is the chunk number
-            TpcdsGeneratorAndLoaderRunnable runnable = new TpcdsGeneratorAndLoaderRunnable(chunkNumber, session, TABLE_TO_GENERATE, bucket, batchLimit);
+            TpcdsConfiguration tpcdsConfiguration = new TpcdsConfiguration(session, partition, TABLE_TO_GENERATE);
+            BucketUpsertConfiguration bucketUpsertConfiguration =
+                    new BucketUpsertConfiguration(bucket, batchLimit, failureRetryDelay, failureMaximumRetries);
+            TpcdsGeneratorAndLoaderRunnable runnable =
+                    new TpcdsGeneratorAndLoaderRunnable(tpcdsConfiguration, bucketUpsertConfiguration);
             executorService.submit(runnable);
         }
 
@@ -192,8 +197,8 @@ public class TpcdsToKVFeeder {
     private static void loadConfiguration(String[] arguments, Map<String, String> configuration) {
 
         // First, read the arguments from the properties file
-        try (InputStream inputStream =
-                     TpcdsToKVFeeder.class.getClassLoader().getResourceAsStream(PROPERTIES_FILE_NAME)) {
+        try (InputStream inputStream = TpcdsToCouchbaseLoader.class.getClassLoader()
+                .getResourceAsStream(PROPERTIES_FILE_NAME)) {
             Properties properties = new Properties();
 
             if (inputStream != null) {
@@ -212,7 +217,8 @@ public class TpcdsToKVFeeder {
         if (arguments != null && arguments.length > 0) {
             for (String arg : arguments) {
                 if (arg.contains("=")) {
-                    configuration.put(arg.substring(0, arg.indexOf('=')).toLowerCase(), arg.substring(arg.indexOf('=') + 1));
+                    configuration
+                            .put(arg.substring(0, arg.indexOf('=')).toLowerCase(), arg.substring(arg.indexOf('=') + 1));
                 }
             }
         }
@@ -227,23 +233,35 @@ public class TpcdsToKVFeeder {
         username = config.get(USER_NAME_FIELD_NAME) != null ? config.get(USER_NAME_FIELD_NAME) : username;
         password = config.get(PASSWORD_FIELD_NAME) != null ? config.get(PASSWORD_FIELD_NAME) : password;
         bucketName = config.get(BUCKET_NAME_FIELD_NAME) != null ? config.get(BUCKET_NAME_FIELD_NAME) : bucketName;
-        isDeleteBucketIfExists = config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME) != null
-                ? Boolean.valueOf(config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME)) : isDeleteBucketIfExists;
-        bucketSize = config.get(BUCKET_SIZE_FIELD_NAME) != null ? Integer.valueOf(config.get(BUCKET_SIZE_FIELD_NAME))
-                : bucketSize;
-        batchLimit = config.get(BATCH_LIMIT_FIELD_NAME) != null
-                ? Integer.valueOf(config.get(BATCH_LIMIT_FIELD_NAME)) : batchLimit;
-        scalingFactor = config.get(SCALING_FACTOR_FIELD_NAME) != null
-                ? Double.valueOf(config.get(SCALING_FACTOR_FIELD_NAME)) : scalingFactor;
-        parallelism = config.get(PARALLELISM_FIELD_NAME) != null ? Integer.valueOf(config.get(PARALLELISM_FIELD_NAME))
-                : parallelism;
-        chunkNumber = config.get(CHUNK_NUMBER_FIELD_NAME) != null ? Integer.valueOf(config.get(CHUNK_NUMBER_FIELD_NAME))
-                : chunkNumber;
-        kvEndpoints = config.get(KV_ENDPOINTS_FIELD_NAME) != null ? Integer.valueOf(config.get(KV_ENDPOINTS_FIELD_NAME))
-                : kvEndpoints;
-        kvTimeout = config.get(KV_TIMEOUT_FIELD_NAME) != null ? Integer.valueOf(config.get(KV_TIMEOUT_FIELD_NAME))
-                : kvTimeout;
-        failureRetryDelay = config.get(FAILURE_RETRY_DELAY_FIELD_NAME) != null
-                ? Integer.valueOf(config.get(FAILURE_RETRY_DELAY_FIELD_NAME)) : failureRetryDelay;
+        isDeleteBucketIfExists = config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME) != null ?
+                Boolean.valueOf(config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME)) :
+                isDeleteBucketIfExists;
+        bucketSize = config.get(BUCKET_SIZE_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(BUCKET_SIZE_FIELD_NAME)) :
+                bucketSize;
+        batchLimit = config.get(BATCH_LIMIT_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(BATCH_LIMIT_FIELD_NAME)) :
+                batchLimit;
+        scalingFactor = config.get(SCALING_FACTOR_FIELD_NAME) != null ?
+                Double.valueOf(config.get(SCALING_FACTOR_FIELD_NAME)) :
+                scalingFactor;
+        partitions = config.get(PARTITIONS_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(PARTITIONS_FIELD_NAME)) :
+                partitions;
+        partition = config.get(PARTITION_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(PARTITION_FIELD_NAME)) :
+                partition;
+        kvEndpoints = config.get(KV_ENDPOINTS_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(KV_ENDPOINTS_FIELD_NAME)) :
+                kvEndpoints;
+        kvTimeout = config.get(KV_TIMEOUT_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(KV_TIMEOUT_FIELD_NAME)) :
+                kvTimeout;
+        failureRetryDelay = config.get(FAILURE_RETRY_DELAY_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(FAILURE_RETRY_DELAY_FIELD_NAME)) :
+                failureRetryDelay;
+        failureMaximumRetries = config.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME) != null ?
+                Integer.valueOf(config.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME)) :
+                failureMaximumRetries;
     }
 }

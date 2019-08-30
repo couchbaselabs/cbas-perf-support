@@ -1,12 +1,12 @@
-#Introduction
+# Introduction
 This tool generates TPC-DS data and loads it into the Couchbase bucket. The tool can be configured through a `properties`
 file or `command line arguments`. If both are provided, the `properties` file values are read first, and are overwritten
 with the `command line arguments` to ease the configuration when running multiple instances. Based on the provided
-parameters, it is possible to generate all the data on a single instances running multiple threads, or generate the
+parameters, it is possible to generate all the data on a single instance running multiple threads, or generate the
 data on multiple partitions. This configuration is done using the `partitions` and `partition` properties, which is
 explained further below.
 
-#Parameters
+# Parameters
 The tool reads the parameters from `properties` file and `command line arguments`, if both are provided, the `command
 line arguments` overwrite the `properties` parameters. The parameter names are case-insensitive. Below is the list of
 the configurable parameters:
@@ -23,9 +23,10 @@ the configurable parameters:
 the bucket is empty before loading the data. The bucket name used is the argument value `bucket` passed. The default
 value is `true`.
 
-`bucketsize (Temporarily disabled)`: Size of the bucket in megabytes.
+`bucketsize (Temporarily disabled)`: Size of the bucket in megabytes, default value is `4096 (4GB)`. Read the `NOTES`
+section below for further information about `bucketsize`.
 
-`batchlimit`: The number of records to generate before doing a batch upsert operation, default value is 10,000.
+`batchlimit`: The number of records to generate before doing a batch upsert operation, default value is `10,000`.
 
 `scalingfactor`: The scaling factor provided to the TPC-DS data generator. The scaling factor determines the data size
 to be generated, the default value is `1 (1GB of data)`.
@@ -48,7 +49,9 @@ the throughput performance, the default value is `2`.
 `failureretrydelay`: The time delay to retry in case of a failure upsert operation. Time is in milliseconds, default
 value is `5000 (5 seconds)`.
 
-#How To Use
+`failuremaximumretries`: The number of times to retry in case of a failure upsert, default value is `10`.
+
+# How To Use
 The tool can be run on a single partition to generate the data, or multiple partitions. The `partitions` property should
 match the number of partitions that will be used to generate the data. The `partitions` property tells the TPC-DS
 generator about the number of partitions that will need to be generated, and the TPC-DS will adjust the data generation
@@ -60,3 +63,9 @@ it is needed for the TPC-DS generator configuration), and the two running partit
 Two of the properties are currently disabled, namely `isdeleteifbucketexists` and `bucketsize`. Because of that, to
 get a correct result, a bucket needs to be created ahead of time, and needs to be empty. The bucket name should match
 the `bucket` property value which the tool will write to.
+
+# Notes
+- TPC-DS generator scaling factor `1` is expected to generate `1GB` worth of data. However, that `1GB` is the generated
+values only. This tool converts the resulted data into JSON records, and adds the field name to each value, this results
+in an increase in the total size. The expected result is `(3.5 to 4) * the original TPC-DS size`. Hence, for a scaling
+factor of `1`, which generate `1GB` of data, the bucket size should be `4GB`, and so on.
