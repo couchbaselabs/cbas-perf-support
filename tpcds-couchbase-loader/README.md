@@ -23,8 +23,7 @@ the configurable parameters:
 the bucket is empty before loading the data. The bucket name used is the argument value `bucket` passed. The default
 value is `true`.
 
-`bucketsize (Temporarily disabled)`: Size of the bucket in megabytes, default value is `4096 (4GB)`. Read the `NOTES`
-section below for further information about `bucketsize`.
+`memoryquota (Temporarily disabled)`: Memory quota of the bucket in megabytes, default value is `4096 (4GB)`.
 
 `batchlimit`: The number of records to generate before doing a batch upsert operation, default value is `10,000`.
 
@@ -51,21 +50,53 @@ value is `5000 (5 seconds)`.
 
 `failuremaximumretries`: The number of times to retry in case of a failure upsert, default value is `10`.
 
+`enablepadding`: Enable padding (trailing white spaces) in generated strings if required by the TPC-DS generator,
+default value is `false`.
+
 # How To Use
+## Generating the JAR file
+To generate the executable JAR file which will be used to run the Loader, follow the these steps:
+- Ensure Maven is installed on your machine.
+- Navigate to the root directory of the project.
+- Run the command `mvn install` at the root of the project.
+- `tpcds.jar` is generated in the folder `cbas-perf-support/tpcds-couchbase-loader/target`. This JAR file is all that is
+needed to run the data generator. Details can be found in the example below. The JAR file can be moved to any location
+for convenience if needed.
+
+## Running the JAR file
 The tool can be run on a single partition to generate the data, or multiple partitions. The `partitions` property should
 match the number of partitions that will be used to generate the data. The `partitions` property tells the TPC-DS
 generator about the number of partitions that will need to be generated, and the TPC-DS will adjust the data generation
-accordingly. The `partition` property will indicate the partition to be generated. For example, if generating the data
-on `2` partitions, the `partitions` property needs to be set to `2` (this needs to be set on all running instances, as
-it is needed for the TPC-DS generator configuration), and the two running partitions will have properties `partition`
-`1` and `partition` `2`.
+accordingly. The `partition` property will indicate the partition to be generated. A detailed example can be found below.
 
-Two of the properties are currently disabled, namely `isdeleteifbucketexists` and `bucketsize`. Because of that, to
+#### Important
+Two of the properties are currently disabled, namely `isdeleteifbucketexists` and `memoryquota`. Because of that, to
 get a correct result, a bucket needs to be created ahead of time, and needs to be empty. The bucket name should match
 the `bucket` property value which the tool will write to.
 
-# Notes
-- TPC-DS generator scaling factor `1` is expected to generate `1GB` worth of data. However, that `1GB` is the generated
-values only. This tool converts the resulted data into JSON records, and adds the field name to each value, this results
-in an increase in the total size. The expected result is `(3.5 to 4) * the original TPC-DS size`. Hence, for a scaling
-factor of `1`, which generate `1GB` of data, the bucket size should be `4GB`, and so on.
+#### Example
+Assuming we are going to run on `3 client machines`, and generate the data on `5` partitions. The first 2 clients will
+generate 2 partitions each, and the third client will generate 1 partition.
+
+#### Notes
+- The `partitions` property needs to match the total number of partitions to be generated, and needs
+to be provided to all instances. This property indicates to the TPC-DS generator how to generate the data.
+- Each client machine needs to be provided the `partition` property for the partition it is going to generate.
+- The total partitions is `5`, and it is generating a scaling factor of `1` (1GB of data).
+
+**Client machine 1** generating partitions `1` and `2`:
+```
+java -jar tpcds.jar partitions=5 partition=1 scalingfactor=1
+java -jar tpcds.jar partitions=5 partition=2 scalingfactor=1
+```
+
+**Client machine 2** generating partitions `3` and `4`:
+```
+java -jar tpcds.jar partitions=5 partition=3 scalingfactor=1
+java -jar tpcds.jar partitions=5 partition=4 scalingfactor=1
+```
+
+**Client machine 3** generating partitions `5`:
+```
+java -jar tpcds.jar partitions=5 partition=5 scalingfactor=1
+```
