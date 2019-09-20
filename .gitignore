@@ -1,6 +1,7 @@
 *~
 target
 out
+logs
 .DS_Store
 git.properties
 .metadata

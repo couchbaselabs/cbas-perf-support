@@ -5,13 +5,13 @@ package com.couchbase.loader;
 
 import com.couchbase.client.java.Bucket;
 
-public class BucketUpsertConfiguration {
+public class BucketConfiguration {
     private Bucket bucket;
     private int batchLimit;
     private int failureRetryDelay;
     private int failureMaximumRetries;
 
-    BucketUpsertConfiguration(Bucket bucket, int batchLimit, int failureRetryDelay, int failureMaximumRetries) {
+    BucketConfiguration(Bucket bucket, int batchLimit, int failureRetryDelay, int failureMaximumRetries) {
         this.bucket = bucket;
         this.batchLimit = batchLimit;
         this.failureRetryDelay = failureRetryDelay;

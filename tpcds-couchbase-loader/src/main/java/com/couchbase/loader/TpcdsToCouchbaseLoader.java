@@ -12,7 +12,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -27,7 +26,6 @@ import com.teradata.tpcds.Session;
 /**
  * This class will generate TPC-DS data based on the specified partitions and scaling factor, and then load it into the
  * Couchbase buckets.
- * <p>
  * If the partition number is passed as an argument, then only that partition is generated and loaded to the bucket. If
  * the partition number is not passed, or a value of -1 is passed, then all the partitions will be generated and loaded
  * to the bucket.
@@ -45,7 +43,7 @@ public class TpcdsToCouchbaseLoader {
     private static final String PASSWORD_DEFAULT = "couchbase";
     private static final String BUCKET_NAME_DEFAULT = "tpcds";
     private static final boolean DELETE_BUCKET_IF_EXISTS_DEFAULT = true;
-    private static final int BUCKET_SIZE_DEFAULT = 4096; // In megabytes
+    private static final int BUCKET_MEMORY_QUOTA_DEFAULT = 4096; // In megabytes
 
     // Configurable members default values
     private static final int BATCH_LIMIT_DEFAULT = 10000; // Threshold to reach before batch upserting
@@ -56,6 +54,7 @@ public class TpcdsToCouchbaseLoader {
     private static final int KV_TIMEOUT_DEFAULT = 10000;
     private static final int FAILURE_RETRY_DELAY_DEFAULT = 5000;
     private static final int FAILURE_MAXIMUM_RETRIES_DEFAULT = 10;
+    private static final boolean ENABLE_PADDING_DEFAULT = false;
 
     // Properties field names
     private static final String HOST_NAME_FIELD_NAME = "hostname";
@@ -63,7 +62,7 @@ public class TpcdsToCouchbaseLoader {
     private static final String PASSWORD_FIELD_NAME = "password";
     private static final String BUCKET_NAME_FIELD_NAME = "bucketname";
     private static final String IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME = "isdeleteifbucketexists";
-    private static final String BUCKET_SIZE_FIELD_NAME = "bucketsize";
+    private static final String BUCKET_SIZE_FIELD_NAME = "memoryquota";
     private static final String BATCH_LIMIT_FIELD_NAME = "batchlimit";
     private static final String SCALING_FACTOR_FIELD_NAME = "scalingfactor";
     private static final String PARTITIONS_FIELD_NAME = "partitions";
@@ -72,6 +71,7 @@ public class TpcdsToCouchbaseLoader {
     private static final String KV_TIMEOUT_FIELD_NAME = "kvtimeout";
     private static final String FAILURE_RETRY_DELAY_FIELD_NAME = "failureretrydelay";
     private static final String FAILURE_MAXIMUM_RETRIES_FIELD_NAME = "failuremaximumretries";
+    private static final String ENABLE_PADDING_FIELD_NAME = "enablepadding";
 
     // Any configuration values that are not passed will use their default respective value
     private static String hostname = HOST_NAME_DEFAULT;
@@ -79,7 +79,7 @@ public class TpcdsToCouchbaseLoader {
     private static String password = PASSWORD_DEFAULT;
     private static String bucketName = BUCKET_NAME_DEFAULT;
     private static boolean isDeleteBucketIfExists = DELETE_BUCKET_IF_EXISTS_DEFAULT;
-    private static int bucketSize = BUCKET_SIZE_DEFAULT;
+    private static int memoryQuota = BUCKET_MEMORY_QUOTA_DEFAULT;
     private static int batchLimit = BATCH_LIMIT_DEFAULT;
     private static double scalingFactor = SCALING_FACTOR_DEFAULT;
     private static int partitions = PARTITIONS_DEFAULT;
@@ -88,6 +88,7 @@ public class TpcdsToCouchbaseLoader {
     private static int kvTimeout = KV_TIMEOUT_DEFAULT;
     private static int failureRetryDelay = FAILURE_RETRY_DELAY_DEFAULT;
     private static int failureMaximumRetries = FAILURE_MAXIMUM_RETRIES_DEFAULT;
+    private static boolean enablePadding = ENABLE_PADDING_DEFAULT;
 
     // Table to generate, null value will generate all tables
     private static String TABLE_TO_GENERATE = null;
@@ -95,78 +96,32 @@ public class TpcdsToCouchbaseLoader {
     public static void main(String[] args) {
         Map<String, String> configuration = new HashMap<>();
 
-        // Load the configuration values and read them
+        // Load the configurations from properties file and command line arguments
         loadConfiguration(args, configuration);
+
+        // Read the provided arguments and overwrite the default values if necessary
         readConfiguration(configuration);
 
         // Threads count is based on the partitions level
         // If partition number is not -1, then this is meant to generate a single partition, so we have a single thread
         ExecutorService executorService = Executors.newFixedThreadPool(partition == -1 ? partitions : 1);
-        LOGGER.log(Level.INFO, "partitions level is " + partitions);
+        LOGGER.info("partitions level is " + partitions);
 
         // Connect to the server and authenticate
-        LOGGER.log(Level.INFO, "Connecting to Couchbase server");
-        CouchbaseEnvironment environment = DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout)
-                .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints)).continuousKeepAliveEnabled(false)
-                .build();
-        Cluster cluster = CouchbaseCluster.create(environment, hostname);
-        cluster.authenticate(username, password);
-        LOGGER.log(Level.INFO, "Connection to Couchbase server successful");
-
-        /*
-        ClusterManager clusterManager = cluster.clusterManager();
-        // Delete the bucket if it already exists
-        if (isDeleteBucketIfExists && clusterManager.hasBucket(bucketName) && (partition == 1 || partition == -1)) {
-            clusterManager.removeBucket(bucketName);
-            LOGGER.log(Level.INFO, bucketName + " bucket deleted");
-        }
-
-        // Create the bucket for the feed data
-        BucketSettings bucketSettings = new DefaultBucketSettings.Builder().type(BucketType.COUCHBASE).name(bucketName)
-                .password("").quota(bucketSize).replicas(1).indexReplicas(true).enableFlush(true).build();
-
-        // Create the bucket if it does not exist
-        if (!clusterManager.hasBucket(bucketName)) {
-            clusterManager.insertBucket(bucketSettings);
-            LOGGER.log(Level.INFO, bucketName + " bucket created");
-
-            // Give the bucket some time to get created before opening it
-            Thread.sleep(10);
-        }
-         */
+        Cluster cluster = connectAndAuthenticate();
 
         // Get the created bucket
-        Bucket bucket = cluster.openBucket(bucketName);
-        LOGGER.log(Level.INFO, bucketName + " bucket opened");
+        Bucket bucket = openBucket(cluster);
 
-        // Start time
+        // Start time (for statistics)
         long startTime = System.currentTimeMillis();
 
         // partition -1 will result in generating all partitions on a single partition
         if (partition == -1) {
             // We start from 1 since partition numbers start from 1
-            for (int i = 1; i <= partitions; i++) {
-                Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions)
-                        .withChunkNumber(i);
-
-                TpcdsConfiguration tpcdsConfiguration = new TpcdsConfiguration(session, i, TABLE_TO_GENERATE);
-                BucketUpsertConfiguration bucketUpsertConfiguration =
-                        new BucketUpsertConfiguration(bucket, batchLimit, failureRetryDelay, failureMaximumRetries);
-                TpcdsGeneratorAndLoaderRunnable runnable =
-                        new TpcdsGeneratorAndLoaderRunnable(tpcdsConfiguration, bucketUpsertConfiguration);
-                executorService.submit(runnable);
-            }
+            generateAllPartitions(executorService, bucket);
         } else {
-            // Generating a single partition
-            Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions)
-                    .withChunkNumber(partition);
-
-            TpcdsConfiguration tpcdsConfiguration = new TpcdsConfiguration(session, partition, TABLE_TO_GENERATE);
-            BucketUpsertConfiguration bucketUpsertConfiguration =
-                    new BucketUpsertConfiguration(bucket, batchLimit, failureRetryDelay, failureMaximumRetries);
-            TpcdsGeneratorAndLoaderRunnable runnable =
-                    new TpcdsGeneratorAndLoaderRunnable(tpcdsConfiguration, bucketUpsertConfiguration);
-            executorService.submit(runnable);
+            generateSinglePartition(executorService, bucket);
         }
 
         // Wait for all partitions to finish their work
@@ -176,15 +131,14 @@ public class TpcdsToCouchbaseLoader {
             executorService.shutdownNow();
         } catch (Exception ex) {
             executorService.shutdownNow();
-            LOGGER.log(Level.WARN, ex.getMessage());
+            LOGGER.error(ex.getMessage());
         }
 
-        // End time
+        // End time (for statistics)
         long endTime = System.currentTimeMillis();
         double duration = (endTime - startTime) / 1000.00;
-        System.out.println("Total time: " + duration + " seconds");
-        LOGGER.log(Level.INFO, "Total time: " + duration + " seconds");
-        LOGGER.log(Level.INFO, "Data generation completed");
+        LOGGER.info("Total time: " + duration + " seconds");
+        LOGGER.info("Data generation completed");
 
         // Release all resources
         cluster.disconnect();
@@ -208,9 +162,9 @@ public class TpcdsToCouchbaseLoader {
                 }
             }
         } catch (FileNotFoundException ex) {
-            LOGGER.log(Level.WARN, "Configuration file not found");
+            LOGGER.error("Configuration file not found");
         } catch (Exception ex) {
-            LOGGER.log(Level.WARN, "Failed to read configuration file");
+            LOGGER.error("Failed to read configuration file");
         }
 
         // Second, override any properties with anything that is provided in command line arguments
@@ -236,9 +190,9 @@ public class TpcdsToCouchbaseLoader {
         isDeleteBucketIfExists = config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME) != null ?
                 Boolean.valueOf(config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME)) :
                 isDeleteBucketIfExists;
-        bucketSize = config.get(BUCKET_SIZE_FIELD_NAME) != null ?
+        memoryQuota = config.get(BUCKET_SIZE_FIELD_NAME) != null ?
                 Integer.valueOf(config.get(BUCKET_SIZE_FIELD_NAME)) :
-                bucketSize;
+                memoryQuota;
         batchLimit = config.get(BATCH_LIMIT_FIELD_NAME) != null ?
                 Integer.valueOf(config.get(BATCH_LIMIT_FIELD_NAME)) :
                 batchLimit;
@@ -263,5 +217,80 @@ public class TpcdsToCouchbaseLoader {
         failureMaximumRetries = config.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME) != null ?
                 Integer.valueOf(config.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME)) :
                 failureMaximumRetries;
+        enablePadding = config.get(ENABLE_PADDING_FIELD_NAME) != null ?
+                Boolean.valueOf(config.get(ENABLE_PADDING_FIELD_NAME)) :
+                enablePadding;
+    }
+
+    /**
+     * Connects to the server and authenticates.
+     *
+     * @return Returns the Couchbase cluster.
+     */
+    private static Cluster connectAndAuthenticate() {
+        LOGGER.info("Connecting to Couchbase server");
+        CouchbaseEnvironment environment = DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout)
+                .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints)).continuousKeepAliveEnabled(false)
+                .build();
+        Cluster cluster = CouchbaseCluster.create(environment, hostname);
+        cluster.authenticate(username, password);
+        LOGGER.info("Connection to Couchbase server successful");
+
+        return cluster;
+    }
+
+    /**
+     * Opens the bucket to upsert the data to.
+     *
+     * @param cluster Cluster which the bucket is created on.
+     * @return Returns the bucket to upsert the data to.
+     */
+    private static Bucket openBucket(Cluster cluster) {
+        Bucket bucket = cluster.openBucket(bucketName);
+        LOGGER.info(bucketName + " bucket opened");
+
+        return bucket;
+    }
+
+    /**
+     * When the requested partition is -1, it indicates that this instance needs to generate all partitions on its own
+     * (depending on the parallelism level provided)
+     *
+     * @param executorService ExecutorService running the Runnables
+     * @param bucket          The bucket the upsert operation is applied to
+     */
+    private static void generateAllPartitions(ExecutorService executorService, Bucket bucket) {
+        for (int i = 1; i <= partitions; i++) {
+            Session session =
+                    Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions).withChunkNumber(i);
+
+            TpcdsConfiguration tpcdsConfiguration =
+                    new TpcdsConfiguration(session, i, TABLE_TO_GENERATE, enablePadding);
+            BucketConfiguration bucketConfiguration =
+                    new BucketConfiguration(bucket, batchLimit, failureRetryDelay, failureMaximumRetries);
+            TpcdsGeneratorAndLoaderRunnable runnable =
+                    new TpcdsGeneratorAndLoaderRunnable(tpcdsConfiguration, bucketConfiguration);
+            executorService.submit(runnable);
+        }
+    }
+
+    /**
+     * When the requested partition is not -1, it indicates that the provided partition only needs to be generated.
+     *
+     * @param executorService ExecutorService running the Runnables
+     * @param bucket          The bucket the upsert operation is applied to
+     */
+    private static void generateSinglePartition(ExecutorService executorService, Bucket bucket) {
+        // Generating a single partition
+        Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions)
+                .withChunkNumber(partition);
+
+        TpcdsConfiguration tpcdsConfiguration =
+                new TpcdsConfiguration(session, partition, TABLE_TO_GENERATE, enablePadding);
+        BucketConfiguration bucketConfiguration =
+                new BucketConfiguration(bucket, batchLimit, failureRetryDelay, failureMaximumRetries);
+        TpcdsGeneratorAndLoaderRunnable runnable =
+                new TpcdsGeneratorAndLoaderRunnable(tpcdsConfiguration, bucketConfiguration);
+        executorService.submit(runnable);
     }
 }

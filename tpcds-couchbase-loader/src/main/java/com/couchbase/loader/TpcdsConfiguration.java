@@ -9,11 +9,13 @@ public class TpcdsConfiguration {
     private Session session;
     private int partition;
     private String tableToGenerate;
+    private boolean enablePadding;
 
-    public TpcdsConfiguration(Session session, int partition, String tableToGenerate) {
+    public TpcdsConfiguration(Session session, int partition, String tableToGenerate, boolean enablePadding) {
         this.session = session;
         this.partition = partition;
         this.tableToGenerate = tableToGenerate;
+        this.enablePadding = enablePadding;
     }
 
     public Session getSession() {
@@ -42,5 +44,13 @@ public class TpcdsConfiguration {
 
     public void setTableToGenerate(String tableToGenerate) {
         this.tableToGenerate = tableToGenerate;
+    }
+
+    public boolean isEnablePadding() {
+        return enablePadding;
+    }
+
+    public void setEnablePadding(boolean enablePadding) {
+        this.enablePadding = enablePadding;
     }
 }
