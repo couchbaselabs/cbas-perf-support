@@ -13,6 +13,8 @@ the configurable parameters:
 
 `hostname`: The host name of the Couchbase server to connect to, default value is `localhost`.
 
+`port`: The port number of the Couchbase server to connect to, if not provided, SDK uses the default value.
+
 `username`: The username of the Couchbase server to connect to, default value is `Administrator`.
 
 `password`: The password of the Couchbase server to connect to, default value is `couchbase`.

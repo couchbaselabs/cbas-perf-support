@@ -39,6 +39,7 @@ public class TpcdsToCouchbaseLoader {
 
     // Couchbase cluster and bucket configs default values
     private static final String HOST_NAME_DEFAULT = "localhost";
+    private static final int PORT_DEFAULT = -9999; // Let the SDK use its own default if not provided
     private static final String USER_NAME_DEFAULT = "Administrator";
     private static final String PASSWORD_DEFAULT = "couchbase";
     private static final String BUCKET_NAME_DEFAULT = "tpcds";
@@ -58,6 +59,7 @@ public class TpcdsToCouchbaseLoader {
 
     // Properties field names
     private static final String HOST_NAME_FIELD_NAME = "hostname";
+    private static final String PORT_FIELD_NAME = "port";
     private static final String USER_NAME_FIELD_NAME = "username";
     private static final String PASSWORD_FIELD_NAME = "password";
     private static final String BUCKET_NAME_FIELD_NAME = "bucketname";
@@ -75,6 +77,7 @@ public class TpcdsToCouchbaseLoader {
 
     // Any configuration values that are not passed will use their default respective value
     private static String hostname = HOST_NAME_DEFAULT;
+    private static int port = PORT_DEFAULT;
     private static String username = USER_NAME_DEFAULT;
     private static String password = PASSWORD_DEFAULT;
     private static String bucketName = BUCKET_NAME_DEFAULT;
@@ -184,6 +187,7 @@ public class TpcdsToCouchbaseLoader {
      */
     private static void readConfiguration(Map<String, String> config) {
         hostname = config.get(HOST_NAME_FIELD_NAME) != null ? config.get(HOST_NAME_FIELD_NAME) : hostname;
+        port = config.get(PORT_FIELD_NAME) != null ? Integer.valueOf(config.get(PORT_FIELD_NAME)) : port;
         username = config.get(USER_NAME_FIELD_NAME) != null ? config.get(USER_NAME_FIELD_NAME) : username;
         password = config.get(PASSWORD_FIELD_NAME) != null ? config.get(PASSWORD_FIELD_NAME) : password;
         bucketName = config.get(BUCKET_NAME_FIELD_NAME) != null ? config.get(BUCKET_NAME_FIELD_NAME) : bucketName;
@@ -229,9 +233,15 @@ public class TpcdsToCouchbaseLoader {
      */
     private static Cluster connectAndAuthenticate() {
         LOGGER.info("Connecting to Couchbase server");
-        CouchbaseEnvironment environment = DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout)
-                .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints)).continuousKeepAliveEnabled(false)
-                .build();
+        DefaultCouchbaseEnvironment.Builder builder = DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout)
+                .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints)).continuousKeepAliveEnabled(false);
+
+        // Use the provided port if supplied
+        if (port != PORT_DEFAULT) {
+            builder.bootstrapHttpDirectPort(port);
+        }
+
+        CouchbaseEnvironment environment = builder.build();
         Cluster cluster = CouchbaseCluster.create(environment, hostname);
         cluster.authenticate(username, password);
         LOGGER.info("Connection to Couchbase server successful");
