@@ -24,7 +24,7 @@ import com.couchbase.client.java.env.DefaultCouchbaseEnvironment;
 import com.teradata.tpcds.Session;
 
 /**
- * This class will generate TPC-DS data based on the specified partitions and scaling factor, and then load it into the
+ * This class will generate TPC-DS data based on the specified partitions and scale factor, and then load it into the
  * Couchbase buckets.
  * If the partition number is passed as an argument, then only that partition is generated and loaded to the bucket. If
  * the partition number is not passed, or a value of -1 is passed, then all the partitions will be generated and loaded
@@ -48,7 +48,7 @@ public class TpcdsToCouchbaseLoader {
 
     // Configurable members default values
     private static final int BATCH_LIMIT_DEFAULT = 10000; // Threshold to reach before batch upserting
-    private static final double SCALING_FACTOR_DEFAULT = 1;
+    private static final double SCALE_FACTOR_DEFAULT = 1;
     private static final int PARTITIONS_DEFAULT = 2;
     private static final int PARTITION_DEFAULT = -1;
     private static final int KV_ENDPOINTS_DEFAULT = 5; // improves the pipelining for better performance
@@ -66,7 +66,7 @@ public class TpcdsToCouchbaseLoader {
     private static final String IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME = "isdeleteifbucketexists";
     private static final String BUCKET_SIZE_FIELD_NAME = "memoryquota";
     private static final String BATCH_LIMIT_FIELD_NAME = "batchlimit";
-    private static final String SCALING_FACTOR_FIELD_NAME = "scalingfactor";
+    private static final String SCALE_FACTOR_FIELD_NAME = "scalefactor";
     private static final String PARTITIONS_FIELD_NAME = "partitions";
     private static final String PARTITION_FIELD_NAME = "partition";
     private static final String KV_ENDPOINTS_FIELD_NAME = "kvendpoints";
@@ -84,7 +84,7 @@ public class TpcdsToCouchbaseLoader {
     private static boolean isDeleteBucketIfExists = DELETE_BUCKET_IF_EXISTS_DEFAULT;
     private static int memoryQuota = BUCKET_MEMORY_QUOTA_DEFAULT;
     private static int batchLimit = BATCH_LIMIT_DEFAULT;
-    private static double scalingFactor = SCALING_FACTOR_DEFAULT;
+    private static double scaleFactor = SCALE_FACTOR_DEFAULT;
     private static int partitions = PARTITIONS_DEFAULT;
     private static int partition = PARTITION_DEFAULT;
     private static int kvEndpoints = KV_ENDPOINTS_DEFAULT;
@@ -200,9 +200,9 @@ public class TpcdsToCouchbaseLoader {
         batchLimit = config.get(BATCH_LIMIT_FIELD_NAME) != null ?
                 Integer.valueOf(config.get(BATCH_LIMIT_FIELD_NAME)) :
                 batchLimit;
-        scalingFactor = config.get(SCALING_FACTOR_FIELD_NAME) != null ?
-                Double.valueOf(config.get(SCALING_FACTOR_FIELD_NAME)) :
-                scalingFactor;
+        scaleFactor = config.get(SCALE_FACTOR_FIELD_NAME) != null ?
+                Double.valueOf(config.get(SCALE_FACTOR_FIELD_NAME)) :
+                scaleFactor;
         partitions = config.get(PARTITIONS_FIELD_NAME) != null ?
                 Integer.valueOf(config.get(PARTITIONS_FIELD_NAME)) :
                 partitions;
@@ -272,7 +272,7 @@ public class TpcdsToCouchbaseLoader {
     private static void generateAllPartitions(ExecutorService executorService, Bucket bucket) {
         for (int i = 1; i <= partitions; i++) {
             Session session =
-                    Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions).withChunkNumber(i);
+                    Session.getDefaultSession().withScale(scaleFactor).withParallelism(partitions).withChunkNumber(i);
 
             TpcdsConfiguration tpcdsConfiguration =
                     new TpcdsConfiguration(session, i, TABLE_TO_GENERATE, enablePadding);
@@ -292,7 +292,7 @@ public class TpcdsToCouchbaseLoader {
      */
     private static void generateSinglePartition(ExecutorService executorService, Bucket bucket) {
         // Generating a single partition
-        Session session = Session.getDefaultSession().withScale(scalingFactor).withParallelism(partitions)
+        Session session = Session.getDefaultSession().withScale(scaleFactor).withParallelism(partitions)
                 .withChunkNumber(partition);
 
         TpcdsConfiguration tpcdsConfiguration =

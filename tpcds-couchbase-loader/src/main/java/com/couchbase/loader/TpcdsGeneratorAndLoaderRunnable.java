@@ -22,8 +22,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * The Runnable used to generate the data. Each runnable is passed the configuration and the partition number to
- * generate. The data is generated and loaded to KV buckets based on the configuration provided.
+ * The Runnable used to generate the data. This will generate the data and load it into KV based on the provided
+ * configuration.
  */
 public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
 
@@ -31,6 +31,11 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
 
     // Table name will be added to each generated record
     private final static String TABLE_NAME_FIELD_NAME = "table_name";
+
+    // When generating the values, a list is created, at index 0, all the values for the parent record exist, if a
+    // child record is created, it is at index 1 in the list
+    private static final int PARENT_VALUES_INDEX = 0;
+    private static final int CHILD_VALUES_INDEX = 1;
 
     // Statistics members
     private int recordCount;
@@ -78,6 +83,7 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
     @Override
     public void run() {
         // Set the thread name to be partition being generated
+        String originalThreadName = Thread.currentThread().getName();
         Thread.currentThread().setName("Partition " + tpcdsConfiguration.getPartition());
 
         boolean continueGeneration;
@@ -90,7 +96,7 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
             if (tableIterators.get(currentTableIndex).hasNext()) {
                 continueGeneration = true;
             }
-            // We went over all the tables
+            // We went over all the tables, stop the generation
             else if (currentTableIndex == tableCount - 1) {
                 break;
             }
@@ -129,6 +135,9 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
         LOGGER.info(
                 "Partition " + tpcdsConfiguration.getPartition() + " Size After Json String (Field names + Values): "
                         + bytesAfterJson + " bytes");
+
+        // Set the thread back to its original name
+        Thread.currentThread().setName(originalThreadName);
     }
 
     /**
@@ -168,8 +177,8 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
         // increment the counter for parent record
         recordCount++;
 
-        // Create an empty JsonObject to fill in with the record data
-        JsonObject parentRecord = constructRecord(values, false);
+        // Construct the record in JSON
+        JsonObject parentRecord = constructRecord(values.get(PARENT_VALUES_INDEX), currentTable);
 
         // Counting total size in bytes for generated values (after Json conversion)
         bytesAfterJson += parentRecord.toString().length();
@@ -188,15 +197,16 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
             // increment the counter for child record
             recordCount++;
 
-            // Create an empty JsonObject to fill in with the record data
-            JsonObject childRecord = constructRecord(values, true);
+            // Construct the record in JSON
+            JsonObject childRecord = constructRecord(values.get(CHILD_VALUES_INDEX), currentTable.getChild());
 
             // Counting total size in bytes for generated values (after Json conversion)
             bytesAfterJson += childRecord.toString().length();
 
             // JsonDocument with key and created record
-            JsonDocument childJsonDocument =
-                    JsonDocument.create(currentTable.getChild().toString() + "-" + recordCount, childRecord);
+            JsonDocument childJsonDocument = JsonDocument
+                    .create(currentTable.getChild().getName() + "-" + ((tpcdsConfiguration.getPartition() - 1) + (
+                            recordCount * tpcdsConfiguration.getPartitions())), childRecord);
 
             // Collecting records for batch upsert
             generatedJsonDocuments.add(childJsonDocument);
@@ -222,36 +232,36 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
      * Constructs the record with the appropriate data types.
      *
      * @param values list containing all the generated values for all columns in a string format.
+     * @param table  Table the record is being constructed for
+     *
      * @return Returns a JsonObject containing the values converted to their appropriate data types.
      */
-    private JsonObject constructRecord(List<List<String>> values, boolean isChildTable) {
+    private JsonObject constructRecord(List<String> values, Table table) {
         JsonObject record = JsonObject.empty();
 
-        Table table = isChildTable ? currentTable.getChild() : currentTable;
-
         // Add the table name to the record
-        record.put(TABLE_NAME_FIELD_NAME, table.toString());
+        record.put(TABLE_NAME_FIELD_NAME, table.getName());
 
         // Including table name length in the total size
-        bytesBeforeJsonWithTableNameField += table.toString().length();
+        bytesBeforeJsonWithTableNameField += table.getName().length();
 
         // Build the record data
-        for (int counter = 0; counter < values.get(isChildTable ? 1 : 0).size(); counter++) {
+        for (int counter = 0; counter < values.size(); counter++) {
 
             // If the value is null, no need to check for the column type
-            if (values.get(0).get(counter) == null) {
-                record.put(table.getColumns()[counter].getName(), values.get(0).get(counter));
+            if (values.get(counter) == null) {
+                record.put(table.getColumns()[counter].getName(), values.get(counter));
                 continue;
             }
 
-            String tableName = table.getColumns()[counter].getName();
-            String stringValue = values.get(0).get(counter);
+            String fieldName = table.getColumns()[counter].getName();
+            String stringValue = values.get(counter);
 
             // Convert the value to the appropriate type based on the column type
             switch (table.getColumns()[counter].getType().getBase()) {
                 // Identifier could be any value, so we're taking it as a string
                 case IDENTIFIER:
-                    record.put(tableName, stringValue);
+                    record.put(fieldName, stringValue);
                     break;
                 // Date and Time are not supported, they are stored as strings and can be modified with date functions
                 case CHAR:
@@ -263,29 +273,28 @@ public class TpcdsGeneratorAndLoaderRunnable implements Runnable {
 
                     // Padding is enabled, add white space trailing if needed
                     if (varcharPrecision.isPresent() && tpcdsConfiguration.isEnablePadding()) {
-                        record.put(tableName, Utils.createStringWithPadding(stringValue, varcharPrecision.get()));
-
+                        record.put(fieldName, Utils.createStringWithPadding(stringValue, varcharPrecision.get()));
                     } else {
                         // Precision not provided or padding is disabled from configuration
-                        record.put(tableName, stringValue);
+                        record.put(fieldName, stringValue);
                     }
                     break;
                 case INTEGER:
-                    record.put(tableName, Integer.valueOf(stringValue));
+                    record.put(fieldName, Integer.valueOf(stringValue));
                     break;
                 case DECIMAL:
-                    record.put(tableName, Double.valueOf(stringValue));
+                    record.put(fieldName, Double.valueOf(stringValue));
                     break;
                 default:
-                    record.put(tableName, stringValue);
+                    record.put(fieldName, stringValue);
                     break;
 
             }
 
             // Counting total size in bytes for generated values (before Json conversion)
-            if (values.get(0).get(counter) != null) {
-                bytesBeforeJsonWithTableNameField += values.get(0).get(counter).length();
-                bytesBeforeJsonWithoutTableNameField += values.get(0).get(counter).length();
+            if (values.get(counter) != null) {
+                bytesBeforeJsonWithTableNameField += values.get(counter).length();
+                bytesBeforeJsonWithoutTableNameField += values.get(counter).length();
             }
         }
 

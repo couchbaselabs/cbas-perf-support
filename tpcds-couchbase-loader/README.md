@@ -29,7 +29,7 @@ value is `true`.
 
 `batchlimit`: The number of records to generate before doing a batch upsert operation, default value is `10,000`.
 
-`scalingfactor`: The scaling factor provided to the TPC-DS data generator. The scaling factor determines the data size
+`scalefactor`: The scale factor provided to the TPC-DS data generator. The scale factor determines the data size
 to be generated, the default value is `1 (1GB of data)`.
 
 `partitions`: The number of partitions that the generator will run on. This will indicate to the TPC-DS generator how
@@ -84,21 +84,21 @@ generate 2 partitions each, and the third client will generate 1 partition.
 - The `partitions` property needs to match the total number of partitions to be generated, and needs
 to be provided to all instances. This property indicates to the TPC-DS generator how to generate the data.
 - Each client machine needs to be provided the `partition` property for the partition it is going to generate.
-- The total partitions is `5`, and it is generating a scaling factor of `1` (1GB of data).
+- The total partitions is `5`, and it is generating a scale factor of `1` (1GB of data).
 
 **Client machine 1** generating partitions `1` and `2`:
 ```
-java -jar tpcds.jar partitions=5 partition=1 scalingfactor=1
-java -jar tpcds.jar partitions=5 partition=2 scalingfactor=1
+java -jar tpcds.jar partitions=5 partition=1 scalefactor=1
+java -jar tpcds.jar partitions=5 partition=2 scalefactor=1
 ```
 
 **Client machine 2** generating partitions `3` and `4`:
 ```
-java -jar tpcds.jar partitions=5 partition=3 scalingfactor=1
-java -jar tpcds.jar partitions=5 partition=4 scalingfactor=1
+java -jar tpcds.jar partitions=5 partition=3 scalefactor=1
+java -jar tpcds.jar partitions=5 partition=4 scalefactor=1
 ```
 
 **Client machine 3** generating partitions `5`:
 ```
-java -jar tpcds.jar partitions=5 partition=5 scalingfactor=1
+java -jar tpcds.jar partitions=5 partition=5 scalefactor=1
 ```
