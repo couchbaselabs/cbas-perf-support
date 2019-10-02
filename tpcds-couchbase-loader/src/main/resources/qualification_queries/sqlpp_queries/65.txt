@@ -1,0 +1,33 @@
+SELECT s.s_store_name,
+       i.i_item_desc,
+       sc.revenue,
+       i.i_current_price,
+       i.i_wholesale_cost,
+       i.i_brand
+FROM   store s,
+       item i,
+       (SELECT ss_store_sk,
+               Avg(revenue) AS ave
+        FROM   (SELECT ss_store_sk,
+                       ss_item_sk,
+                       Sum(ss.ss_sales_price) AS revenue
+                FROM   store_sales ss,
+                       date_dim dd
+                WHERE  ss.ss_sold_date_sk = dd.d_date_sk
+                       AND dd.d_month_seq BETWEEN 1199 AND 1199 + 11
+                GROUP  BY ss.ss_store_sk, ss.ss_item_sk) sa
+        GROUP  BY ss_store_sk) sb,
+       (SELECT ss_store_sk,
+               ss_item_sk,
+               Sum(ss.ss_sales_price) AS revenue
+        FROM   store_sales ss,
+               date_dim dd
+        WHERE  ss.ss_sold_date_sk = dd.d_date_sk
+           AND dd.d_month_seq BETWEEN 1199 AND 1199 + 11
+        GROUP  BY ss.ss_store_sk, ss.ss_item_sk) sc
+WHERE  sb.ss_store_sk = sc.ss_store_sk
+       AND sc.revenue <= 0.1 * sb.ave
+       AND s.s_store_sk = sc.ss_store_sk
+       AND i.i_item_sk = sc.ss_item_sk
+ORDER  BY s.s_store_name, i.i_item_desc
+LIMIT 100;
