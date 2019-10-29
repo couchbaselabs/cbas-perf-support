@@ -11,6 +11,9 @@ The tool reads the parameters from `properties` file and `command line arguments
 line arguments` overwrite the `properties` parameters. The parameter names are case-insensitive. Below is the list of
 the configurable parameters:
 
+`propertiesfilepath`: The path to the properties file to be used for reading the configurations. If not provided, the
+the default properties file is used.
+
 `hostname`: The host name of the Couchbase server to connect to, default value is `localhost`.
 
 `port`: The port number of the Couchbase server to connect to, if not provided, SDK uses the default value.

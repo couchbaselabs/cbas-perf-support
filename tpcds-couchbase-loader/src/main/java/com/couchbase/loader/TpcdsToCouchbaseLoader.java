@@ -3,8 +3,10 @@
  */
 package com.couchbase.loader;
 
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -43,8 +45,8 @@ public class TpcdsToCouchbaseLoader {
     private static final String USER_NAME_DEFAULT = "Administrator";
     private static final String PASSWORD_DEFAULT = "couchbase";
     private static final String BUCKET_NAME_DEFAULT = "tpcds";
-    private static final boolean DELETE_BUCKET_IF_EXISTS_DEFAULT = true;
-    private static final int BUCKET_MEMORY_QUOTA_DEFAULT = 4096; // In megabytes
+    private static final boolean IS_DELETE_BUCKET_IF_EXISTS_DEFAULT = true;
+    private static final int MEMORY_QUOTA_DEFAULT = 4096; // In megabytes
 
     // Configurable members default values
     private static final int BATCH_LIMIT_DEFAULT = 10000; // Threshold to reach before batch upserting
@@ -52,19 +54,20 @@ public class TpcdsToCouchbaseLoader {
     private static final int PARTITIONS_DEFAULT = 2;
     private static final int PARTITION_DEFAULT = -1;
     private static final int KV_ENDPOINTS_DEFAULT = 5; // improves the pipelining for better performance
-    private static final int KV_TIMEOUT_DEFAULT = 10000;
+    private static final int KV_TIMEOUT_DEFAULT = 30000;
     private static final int FAILURE_RETRY_DELAY_DEFAULT = 5000;
     private static final int FAILURE_MAXIMUM_RETRIES_DEFAULT = 10;
     private static final boolean ENABLE_PADDING_DEFAULT = false;
 
     // Properties field names
+    private static final String PROPERTIES_FILE_PATH_FIELD_NAME = "propertiesfilepath";
     private static final String HOST_NAME_FIELD_NAME = "hostname";
     private static final String PORT_FIELD_NAME = "port";
     private static final String USER_NAME_FIELD_NAME = "username";
     private static final String PASSWORD_FIELD_NAME = "password";
     private static final String BUCKET_NAME_FIELD_NAME = "bucketname";
     private static final String IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME = "isdeleteifbucketexists";
-    private static final String BUCKET_SIZE_FIELD_NAME = "memoryquota";
+    private static final String MEMORY_QUOTA_FIELD_NAME = "memoryquota";
     private static final String BATCH_LIMIT_FIELD_NAME = "batchlimit";
     private static final String SCALE_FACTOR_FIELD_NAME = "scalefactor";
     private static final String PARTITIONS_FIELD_NAME = "partitions";
@@ -75,38 +78,39 @@ public class TpcdsToCouchbaseLoader {
     private static final String FAILURE_MAXIMUM_RETRIES_FIELD_NAME = "failuremaximumretries";
     private static final String ENABLE_PADDING_FIELD_NAME = "enablepadding";
 
-    // Any configuration values that are not passed will use their default respective value
-    private static String hostname = HOST_NAME_DEFAULT;
-    private static int port = PORT_DEFAULT;
-    private static String username = USER_NAME_DEFAULT;
-    private static String password = PASSWORD_DEFAULT;
-    private static String bucketName = BUCKET_NAME_DEFAULT;
-    private static boolean isDeleteBucketIfExists = DELETE_BUCKET_IF_EXISTS_DEFAULT;
-    private static int memoryQuota = BUCKET_MEMORY_QUOTA_DEFAULT;
-    private static int batchLimit = BATCH_LIMIT_DEFAULT;
-    private static double scaleFactor = SCALE_FACTOR_DEFAULT;
-    private static int partitions = PARTITIONS_DEFAULT;
-    private static int partition = PARTITION_DEFAULT;
-    private static int kvEndpoints = KV_ENDPOINTS_DEFAULT;
-    private static int kvTimeout = KV_TIMEOUT_DEFAULT;
-    private static int failureRetryDelay = FAILURE_RETRY_DELAY_DEFAULT;
-    private static int failureMaximumRetries = FAILURE_MAXIMUM_RETRIES_DEFAULT;
-    private static boolean enablePadding = ENABLE_PADDING_DEFAULT;
+    private static final Map<String, String> configuration = new HashMap<>();
+
+    static {
+        configuration.put(HOST_NAME_FIELD_NAME, HOST_NAME_DEFAULT);
+        configuration.put(PORT_FIELD_NAME, String.valueOf(PORT_DEFAULT));
+        configuration.put(USER_NAME_FIELD_NAME, USER_NAME_DEFAULT);
+        configuration.put(PASSWORD_FIELD_NAME, PASSWORD_DEFAULT);
+        configuration.put(BUCKET_NAME_FIELD_NAME, BUCKET_NAME_DEFAULT);
+        configuration.put(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME, String.valueOf(IS_DELETE_BUCKET_IF_EXISTS_DEFAULT));
+        configuration.put(MEMORY_QUOTA_FIELD_NAME, String.valueOf(MEMORY_QUOTA_DEFAULT));
+        configuration.put(BATCH_LIMIT_FIELD_NAME, String.valueOf(BATCH_LIMIT_DEFAULT));
+        configuration.put(SCALE_FACTOR_FIELD_NAME, String.valueOf(SCALE_FACTOR_DEFAULT));
+        configuration.put(PARTITIONS_FIELD_NAME, String.valueOf(PARTITIONS_DEFAULT));
+        configuration.put(PARTITION_FIELD_NAME, String.valueOf(PARTITION_DEFAULT));
+        configuration.put(KV_ENDPOINTS_FIELD_NAME, String.valueOf(KV_ENDPOINTS_DEFAULT));
+        configuration.put(KV_TIMEOUT_FIELD_NAME, String.valueOf(KV_TIMEOUT_DEFAULT));
+        configuration.put(FAILURE_RETRY_DELAY_FIELD_NAME, String.valueOf(FAILURE_RETRY_DELAY_DEFAULT));
+        configuration.put(FAILURE_MAXIMUM_RETRIES_FIELD_NAME, String.valueOf(FAILURE_MAXIMUM_RETRIES_DEFAULT));
+        configuration.put(ENABLE_PADDING_FIELD_NAME, String.valueOf(ENABLE_PADDING_DEFAULT));
+    }
 
     // Table to generate, null value will generate all tables
     private static String TABLE_TO_GENERATE = null;
 
     public static void main(String[] args) {
-        Map<String, String> configuration = new HashMap<>();
-
-        // Load the configurations from properties file and command line arguments
-        loadConfiguration(args, configuration);
-
-        // Read the provided arguments and overwrite the default values if necessary
-        readConfiguration(configuration);
+        // Read the configuration from the command line and properties file
+        readConfiguration(args);
 
         // Threads count is based on the partitions level
         // If partition number is not -1, then this is meant to generate a single partition, so we have a single thread
+        int partitions = Integer.valueOf(configuration.get(PARTITIONS_FIELD_NAME));
+        int partition = Integer.valueOf(configuration.get(PARTITION_FIELD_NAME));
+
         ExecutorService executorService = Executors.newFixedThreadPool(partition == -1 ? partitions : 1);
         LOGGER.info("partitions level is " + partitions);
 
@@ -151,79 +155,93 @@ public class TpcdsToCouchbaseLoader {
      * Reads the configuration from a properties file, then override it with command line arguments. Any parameters
      * that are not provided will use their default values.
      */
-    private static void loadConfiguration(String[] arguments, Map<String, String> configuration) {
+    private static void readConfiguration(String[] arguments) {
+        // Command line configurations
+        Map<String, String> cmdlineConfig = readCommandLineConfiguration(arguments);
 
-        // First, read the arguments from the properties file
-        try (InputStream inputStream = TpcdsToCouchbaseLoader.class.getClassLoader()
-                .getResourceAsStream(PROPERTIES_FILE_NAME)) {
-            Properties properties = new Properties();
+        String propertiesFilePath = null;
 
-            if (inputStream != null) {
-                properties.load(inputStream);
-                for (Map.Entry<Object, Object> entry : properties.entrySet()) {
-                    configuration.put(entry.getKey().toString().toLowerCase(), entry.getValue().toString());
-                }
-            }
-        } catch (FileNotFoundException ex) {
-            LOGGER.error("Configuration file not found");
-        } catch (Exception ex) {
-            LOGGER.error("Failed to read configuration file");
-        }
-
-        // Second, override any properties with anything that is provided in command line arguments
-        if (arguments != null && arguments.length > 0) {
-            for (String arg : arguments) {
-                if (arg.contains("=")) {
-                    configuration
-                            .put(arg.substring(0, arg.indexOf('=')).toLowerCase(), arg.substring(arg.indexOf('=') + 1));
-                }
+        // Get the properties file if it was provided in command line arguments
+        for (Map.Entry<String, String> entry : cmdlineConfig.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(PROPERTIES_FILE_PATH_FIELD_NAME)) {
+                propertiesFilePath = entry.getValue();
+                break;
             }
         }
+
+        // Properties file configurations
+        Map<String, String> propertiesFileConfig = readPropertiesFileConfiguration(propertiesFilePath);
+
+        // Make sure the command line configs override the properties file configs
+        configuration.putAll(propertiesFileConfig);
+        configuration.putAll(cmdlineConfig);
     }
 
     /**
-     * Configuration values are set to their default value, if no new configuration is passed, the default value is
-     * used.
+     * Reads the configuration passed in the command line
+     *
+     * @param arguments command line arguments
+     * @return a map containing the read configuration
      */
-    private static void readConfiguration(Map<String, String> config) {
-        hostname = config.get(HOST_NAME_FIELD_NAME) != null ? config.get(HOST_NAME_FIELD_NAME) : hostname;
-        port = config.get(PORT_FIELD_NAME) != null ? Integer.valueOf(config.get(PORT_FIELD_NAME)) : port;
-        username = config.get(USER_NAME_FIELD_NAME) != null ? config.get(USER_NAME_FIELD_NAME) : username;
-        password = config.get(PASSWORD_FIELD_NAME) != null ? config.get(PASSWORD_FIELD_NAME) : password;
-        bucketName = config.get(BUCKET_NAME_FIELD_NAME) != null ? config.get(BUCKET_NAME_FIELD_NAME) : bucketName;
-        isDeleteBucketIfExists = config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME) != null ?
-                Boolean.valueOf(config.get(IS_DELETE_IF_BUCKET_EXISTS_FIELD_NAME)) :
-                isDeleteBucketIfExists;
-        memoryQuota = config.get(BUCKET_SIZE_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(BUCKET_SIZE_FIELD_NAME)) :
-                memoryQuota;
-        batchLimit = config.get(BATCH_LIMIT_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(BATCH_LIMIT_FIELD_NAME)) :
-                batchLimit;
-        scaleFactor = config.get(SCALE_FACTOR_FIELD_NAME) != null ?
-                Double.valueOf(config.get(SCALE_FACTOR_FIELD_NAME)) :
-                scaleFactor;
-        partitions = config.get(PARTITIONS_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(PARTITIONS_FIELD_NAME)) :
-                partitions;
-        partition = config.get(PARTITION_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(PARTITION_FIELD_NAME)) :
-                partition;
-        kvEndpoints = config.get(KV_ENDPOINTS_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(KV_ENDPOINTS_FIELD_NAME)) :
-                kvEndpoints;
-        kvTimeout = config.get(KV_TIMEOUT_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(KV_TIMEOUT_FIELD_NAME)) :
-                kvTimeout;
-        failureRetryDelay = config.get(FAILURE_RETRY_DELAY_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(FAILURE_RETRY_DELAY_FIELD_NAME)) :
-                failureRetryDelay;
-        failureMaximumRetries = config.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME) != null ?
-                Integer.valueOf(config.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME)) :
-                failureMaximumRetries;
-        enablePadding = config.get(ENABLE_PADDING_FIELD_NAME) != null ?
-                Boolean.valueOf(config.get(ENABLE_PADDING_FIELD_NAME)) :
-                enablePadding;
+    private static Map<String, String> readCommandLineConfiguration(String[] arguments) {
+        Map<String, String> configs = new HashMap<>();
+
+        // Arguments from command line
+        if (arguments != null && arguments.length > 0) {
+            for (String arg : arguments) {
+                if (arg.contains("=")) {
+                    configs.put(arg.substring(0, arg.indexOf('=')).toLowerCase(), arg.substring(arg.indexOf('=') + 1));
+                }
+            }
+        }
+
+        return configs;
+    }
+
+    /**
+     * Reads the configuration from the properties file. Uses the default properties file if path for properties file
+     * is not provided.
+     *
+     * @param propertiesFilePath properties file path that is provided by the user
+     * @return a map containing the read configuration
+     */
+    private static Map<String, String> readPropertiesFileConfiguration(String propertiesFilePath) {
+        Map<String, String> configs = new HashMap<>();
+        boolean isPropertiesFilePathProvided = false;
+
+        // User provided file path
+        if (propertiesFilePath != null) {
+            isPropertiesFilePathProvided = true;
+            LOGGER.info("Loaded properties file: " + propertiesFilePath);
+        } else {
+            // No file provided, use default
+            LOGGER.info("No properties file provided, using default properties file");
+        }
+
+        try (InputStream inputStream = isPropertiesFilePathProvided ?
+                new FileInputStream(Paths.get(propertiesFilePath).toFile()) :
+                TpcdsToCouchbaseLoader.class.getClassLoader().getResourceAsStream(PROPERTIES_FILE_NAME)) {
+
+            Properties properties = new Properties();
+
+            // Load the properties from the configuration file
+            if (inputStream != null) {
+                properties.load(inputStream);
+            } else {
+                // This should never happen, default configuration file exists in resources
+                LOGGER.error("Properties configuration file not found");
+            }
+
+            for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+                configs.put(entry.getKey().toString().toLowerCase(), entry.getValue().toString());
+            }
+        } catch (FileNotFoundException ex) {
+            LOGGER.error("Configuration file not found. " + ex.getMessage());
+        } catch (Exception ex) {
+            LOGGER.error("Failed to read configuration file. " + ex.getMessage());
+        }
+
+        return configs;
     }
 
     /**
@@ -233,8 +251,21 @@ public class TpcdsToCouchbaseLoader {
      */
     private static Cluster connectAndAuthenticate() {
         LOGGER.info("Connecting to Couchbase server");
-        DefaultCouchbaseEnvironment.Builder builder = DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout)
-                .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints)).continuousKeepAliveEnabled(false);
+
+        String hostname = configuration.get(HOST_NAME_DEFAULT);
+        String username = configuration.get(USER_NAME_FIELD_NAME);
+        String password = configuration.get(PASSWORD_FIELD_NAME);
+        int port = Integer.valueOf(configuration.get(PORT_FIELD_NAME));
+        int kvEndpoints = Integer.valueOf(configuration.get(KV_ENDPOINTS_FIELD_NAME));
+        int kvTimeout = Integer.valueOf(configuration.get(KV_TIMEOUT_FIELD_NAME));
+
+        // TODO(Hussain): Temporarily, connect timeout has been added with 30 seconds. Strange behavior has been
+        // happening where the connection just times out instantly and fails on KV side, increasing the timeout helps
+        // resolve the issue sometimes. The issue is intermittent, needs further investigation.
+        DefaultCouchbaseEnvironment.Builder builder =
+                DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout).connectTimeout(30000)
+                        .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints))
+                        .continuousKeepAliveEnabled(false);
 
         // Use the provided port if supplied
         if (port != PORT_DEFAULT) {
@@ -256,6 +287,9 @@ public class TpcdsToCouchbaseLoader {
      * @return Returns the bucket to upsert the data to.
      */
     private static Bucket openBucket(Cluster cluster) {
+        String bucketName = configuration.get(BUCKET_NAME_FIELD_NAME);
+
+        LOGGER.info("opening bucket " + bucketName);
         Bucket bucket = cluster.openBucket(bucketName);
         LOGGER.info(bucketName + " bucket opened");
 
@@ -270,6 +304,13 @@ public class TpcdsToCouchbaseLoader {
      * @param bucket          The bucket the upsert operation is applied to
      */
     private static void generateAllPartitions(ExecutorService executorService, Bucket bucket) {
+        int partitions = Integer.valueOf(configuration.get(PARTITIONS_FIELD_NAME));
+        double scaleFactor = Double.valueOf(configuration.get(SCALE_FACTOR_FIELD_NAME));
+        int batchLimit = Integer.valueOf(configuration.get(BATCH_LIMIT_FIELD_NAME));
+        int failureRetryDelay = Integer.valueOf(configuration.get(FAILURE_RETRY_DELAY_FIELD_NAME));
+        int failureMaximumRetries = Integer.valueOf(configuration.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME));
+        boolean enablePadding = Boolean.valueOf(configuration.get(ENABLE_PADDING_FIELD_NAME));
+
         for (int i = 1; i <= partitions; i++) {
             Session session =
                     Session.getDefaultSession().withScale(scaleFactor).withParallelism(partitions).withChunkNumber(i);
@@ -291,6 +332,14 @@ public class TpcdsToCouchbaseLoader {
      * @param bucket          The bucket the upsert operation is applied to
      */
     private static void generateSinglePartition(ExecutorService executorService, Bucket bucket) {
+        int partitions = Integer.valueOf(configuration.get(PARTITIONS_FIELD_NAME));
+        int partition = Integer.valueOf(configuration.get(PARTITION_FIELD_NAME));
+        double scaleFactor = Double.valueOf(configuration.get(SCALE_FACTOR_FIELD_NAME));
+        int batchLimit = Integer.valueOf(configuration.get(BATCH_LIMIT_FIELD_NAME));
+        int failureRetryDelay = Integer.valueOf(configuration.get(FAILURE_RETRY_DELAY_FIELD_NAME));
+        int failureMaximumRetries = Integer.valueOf(configuration.get(FAILURE_MAXIMUM_RETRIES_FIELD_NAME));
+        boolean enablePadding = Boolean.valueOf(configuration.get(ENABLE_PADDING_FIELD_NAME));
+
         // Generating a single partition
         Session session = Session.getDefaultSession().withScale(scaleFactor).withParallelism(partitions)
                 .withChunkNumber(partition);
