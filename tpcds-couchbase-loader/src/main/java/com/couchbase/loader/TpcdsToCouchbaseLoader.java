@@ -112,10 +112,10 @@ public class TpcdsToCouchbaseLoader {
         int partition = Integer.valueOf(configuration.get(PARTITION_FIELD_NAME));
 
         ExecutorService executorService = Executors.newFixedThreadPool(partition == -1 ? partitions : 1);
-        LOGGER.info("partitions level is " + partitions);
+        LOGGER.info("Number of partitions is " + partitions);
 
         // Connect to the server and authenticate
-        Cluster cluster = connectAndAuthenticate();
+        Cluster cluster = createAndAuthenticateCluster();
 
         // Get the created bucket
         Bucket bucket = openBucket(cluster);
@@ -246,36 +246,35 @@ public class TpcdsToCouchbaseLoader {
 
     /**
      * Connects to the server and authenticates.
+     * Note: Actual connection to the cluster only happens when operations are attempted, e.g, opening a bucket.
      *
      * @return Returns the Couchbase cluster.
      */
-    private static Cluster connectAndAuthenticate() {
-        LOGGER.info("Connecting to Couchbase server");
-
-        String hostname = configuration.get(HOST_NAME_DEFAULT);
+    private static Cluster createAndAuthenticateCluster() {
+        String hostname = configuration.get(HOST_NAME_FIELD_NAME);
         String username = configuration.get(USER_NAME_FIELD_NAME);
         String password = configuration.get(PASSWORD_FIELD_NAME);
         int port = Integer.valueOf(configuration.get(PORT_FIELD_NAME));
         int kvEndpoints = Integer.valueOf(configuration.get(KV_ENDPOINTS_FIELD_NAME));
         int kvTimeout = Integer.valueOf(configuration.get(KV_TIMEOUT_FIELD_NAME));
 
-        // TODO(Hussain): Temporarily, connect timeout has been added with 30 seconds. Strange behavior has been
-        // happening where the connection just times out instantly and fails on KV side, increasing the timeout helps
-        // resolve the issue sometimes. The issue is intermittent, needs further investigation.
-        DefaultCouchbaseEnvironment.Builder builder =
-                DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout).connectTimeout(30000)
-                        .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints))
-                        .continuousKeepAliveEnabled(false);
+        DefaultCouchbaseEnvironment.Builder builder = DefaultCouchbaseEnvironment.builder().kvTimeout(kvTimeout)
+                .keyValueServiceConfig(KeyValueServiceConfig.create(kvEndpoints)).continuousKeepAliveEnabled(false);
 
         // Use the provided port if supplied
         if (port != PORT_DEFAULT) {
             builder.bootstrapHttpDirectPort(port);
         }
 
+        // Build the environment
+        LOGGER.info("Provided properties: " + configuration.toString());
         CouchbaseEnvironment environment = builder.build();
+
+        String address = "hostname: " + hostname + " port: " + environment.bootstrapHttpDirectPort();
+        LOGGER.info("Creating and authenticating cluster on: " + address);
         Cluster cluster = CouchbaseCluster.create(environment, hostname);
         cluster.authenticate(username, password);
-        LOGGER.info("Connection to Couchbase server successful");
+        LOGGER.info("Cluster created and authenticated successfully on: " + address);
 
         return cluster;
     }
