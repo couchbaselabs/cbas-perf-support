@@ -114,16 +114,16 @@ public class TpcdsToCouchbaseLoader {
         ExecutorService executorService = Executors.newFixedThreadPool(partition == -1 ? partitions : 1);
         LOGGER.info("Number of partitions is " + partitions);
 
-        // Connect to the server and authenticate
+        // Create and authenticate the cluster
         Cluster cluster = createAndAuthenticateCluster();
 
-        // Get the created bucket
+        // Open the bucket
         Bucket bucket = openBucket(cluster);
 
         // Start time (for statistics)
         long startTime = System.currentTimeMillis();
 
-        // partition -1 will result in generating all partitions on a single partition
+        // partition -1 will result in generating all partitions on a single instance
         if (partition == -1) {
             // We start from 1 since partition numbers start from 1
             generateAllPartitions(executorService, bucket);
@@ -152,8 +152,9 @@ public class TpcdsToCouchbaseLoader {
     }
 
     /**
-     * Reads the configuration from a properties file, then override it with command line arguments. Any parameters
-     * that are not provided will use their default values.
+     * Reads the configuration for the data generation.
+     *
+     * @param arguments Passed command-line arguments
      */
     private static void readConfiguration(String[] arguments) {
         // Command line configurations
@@ -245,7 +246,7 @@ public class TpcdsToCouchbaseLoader {
     }
 
     /**
-     * Connects to the server and authenticates.
+     * Create and authenticate the cluster.
      * Note: Actual connection to the cluster only happens when operations are attempted, e.g, opening a bucket.
      *
      * @return Returns the Couchbase cluster.
@@ -280,7 +281,7 @@ public class TpcdsToCouchbaseLoader {
     }
 
     /**
-     * Opens the bucket to upsert the data to.
+     * Opens the bucket.
      *
      * @param cluster Cluster which the bucket is created on.
      * @return Returns the bucket to upsert the data to.
