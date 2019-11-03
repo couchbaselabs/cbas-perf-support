@@ -22,7 +22,7 @@ the default properties file is used.
 
 `password`: The password of the Couchbase server to connect to, default value is `couchbase`.
 
-`bucket`: The name of the bucket to load the data into, default value is `tpcds`.
+`bucketname`: The name of the bucket to load the data into, default value is `tpcds`.
 
 `isdeleteifbucketexists (Temporarily disabled)`: Deletes the bucket if it already exists, and re-creates it to ensure
 the bucket is empty before loading the data. The bucket name used is the argument value `bucket` passed. The default
@@ -91,17 +91,17 @@ to be provided to all instances. This property indicates to the TPC-DS generator
 
 **Client machine 1** generating partitions `1` and `2`:
 ```
-java -jar tpcds.jar partitions=5 partition=1 scalefactor=1
-java -jar tpcds.jar partitions=5 partition=2 scalefactor=1
+java -jar tpcds.jar partitions=5 partition=1 scalefactor=1 bucketname=bucket1
+java -jar tpcds.jar partitions=5 partition=2 scalefactor=1 bucketname=bucket1
 ```
 
 **Client machine 2** generating partitions `3` and `4`:
 ```
-java -jar tpcds.jar partitions=5 partition=3 scalefactor=1
-java -jar tpcds.jar partitions=5 partition=4 scalefactor=1
+java -jar tpcds.jar partitions=5 partition=3 scalefactor=1 bucketname=bucket1
+java -jar tpcds.jar partitions=5 partition=4 scalefactor=1 bucketname=bucket1
 ```
 
 **Client machine 3** generating partitions `5`:
 ```
-java -jar tpcds.jar partitions=5 partition=5 scalefactor=1
+java -jar tpcds.jar partitions=5 partition=5 scalefactor=1 bucketname=bucket1
 ```
