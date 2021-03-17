@@ -2,18 +2,20 @@
 
 import sys
 
-## convert the file size to readable format
+
+# convert the file size to readable format
 def format_bytes(size):
     # 2**10 = 1024
     power = 2**10
     n = 0
-    power_labels = {0 : ' Bytes', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
+    power_labels = {0: ' Bytes', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
     while size > power:
         size /= power
         n += 1
     return str(round(size, 2)) + power_labels[n]
 
-## User input parameters
+
+# User input parameters
 print("General Information ------------------------------------------------------")
 totalNumberOfRecords = int(sys.argv[1])
 numberOfRecordsPerFile = int(sys.argv[2])
@@ -31,7 +33,7 @@ print("Number of fields per record: ", recordFieldsCount)
 print("----------------------------------------------------------------------------\n")
 
 
-## Calculate the size of each field
+# Calculate the size of each field
 print("Per Record Information ------------------------------------------------------")
 eachFieldSize = int(recordSize / recordFieldsCount)
 lastFieldLeftOver = recordSize % recordFieldsCount
@@ -40,7 +42,7 @@ print("Each field will be ", format_bytes(eachFieldSize))
 print("Last field will be ", format_bytes(eachFieldSize + lastFieldLeftOver))
 
 
-## Create the JSON document as per the provided input
+# Create the JSON document as per the provided input
 print("Generating record started...")
 eachFieldValue = "a" * eachFieldSize
 lastFieldValue = ("a" * eachFieldSize) + ("a" * lastFieldLeftOver)
@@ -52,8 +54,8 @@ print("Record creation completed. Each record size is: ", format_bytes(len(jsonO
 print("----------------------------------------------------------------------------\n")
 
 
-## We will generate a single file, however, display the stats for the total numbers
-print("File Information ------------------------------------------------------")
+# We will generate a single file, however, display the stats for the total numbers
+print("File Information -----------------------------------------------------------")
 leftOverRecords = totalNumberOfRecords % numberOfRecordsPerFile
 numberOfFiles = int(totalNumberOfRecords / numberOfRecordsPerFile)
 print("Number of files to be generated: ", numberOfFiles)
