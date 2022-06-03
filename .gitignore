@@ -56,3 +56,9 @@ local.properties
 # IntelliJ IDEA
 *.iml
 *.idea
+
+# temp stuff
+json-to-parquet/scripts/__pycache__/
+json-to-parquet/data/input/*
+json-to-parquet/data/int-output/*
+json-to-parquet/data/output/*
